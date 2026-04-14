@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
     public sealed partial class Splice<T>
     {
@@ -32,29 +32,29 @@ namespace MandalaLogics.Splice
                 _pos++;
 
                 if (_pos >= _owner.Count) return false;
+                
+                if (_owner._cache.TryGet(_pos) is { } ie)
+                {
+                    Current = (T)ie;
+                }
                 else
                 {
-
-                    if (_owner._cache.TryGet(_pos) is { } ie)
-                    {
-                        Current = (T)ie;
-                    }
-                    else
-                    {
-                        Current = _owner.ReadFromChain(_pos);
-                    }
-                    
-                    return true;
+                    Current = _owner.ReadFromChain(_pos);
                 }
+                    
+                return true;
             }
 
             public void Reset()
             {
                 CheckThreadId();
 
-                if (!_owner._enumLock.IsReadLockHeld)
+                lock (this)
                 {
-                    _owner._enumLock.EnterReadLock();
+                    if (!_owner._enumLock.IsReadLockHeld)
+                    {
+                        _owner._enumLock.EnterReadLock();
+                    }
                 }
                 
                 _pos = -1;
@@ -62,14 +62,21 @@ namespace MandalaLogics.Splice
 
             public void Dispose()
             {
-                _owner._enumLock.ExitReadLock();
+                CheckThreadId();
+
+                lock (this)
+                {
+                    if (!_owner._enumLock.IsReadLockHeld) return;
+                
+                    _owner._enumLock.ExitReadLock();
+                }
             }
             
             private void CheckThreadId()
             {
                 if (Thread.CurrentThread.ManagedThreadId != _threadId)
                 {
-                    throw new InvalidOperationException("Weave enumerator cannot be moved between threads.");
+                    throw new InvalidOperationException("Splice enumerator cannot be moved between threads.");
                 }
             }
         }

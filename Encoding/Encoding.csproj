@@ -8,4 +8,8 @@
     <RootNamespace>MandalaLogics.Encoding</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Locking\Locking.csproj" />
+  </ItemGroup>
+
 </Project>

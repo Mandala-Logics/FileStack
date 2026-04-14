@@ -5,9 +5,13 @@ namespace MandalaLogics.Encoding
 {
     public sealed class EncodedPrimitive : EncodedValue
     {
+        public static readonly EncodedPrimitive True = new EncodedPrimitive(true);
+        public static readonly EncodedPrimitive False = new EncodedPrimitive(false);
+        
         public override object Value => _value;
         public override TypeCode TypeCode => _value.GetTypeCode();
         public override EncodedValueType EncodedType => EncodedValueType.Primitive;
+        public override bool IsFixedSize => TypeCode != TypeCode.String;
 
         private readonly IConvertible _value;
 
@@ -16,6 +20,11 @@ namespace MandalaLogics.Encoding
             _value = value;
 
             if (TypeCode == TypeCode.DBNull || TypeCode == TypeCode.Object || TypeCode == TypeCode.Empty) { throw new NotSupportedException("DBNull type, empty type and object type are not supported."); }
+        }
+
+        public override ulong GetLongHash()
+        {
+            return LongHashPrimitive(_value);
         }
 
         internal override void WriteBytes(BinaryWriter bw)
@@ -108,6 +117,63 @@ namespace MandalaLogics.Encoding
                     return new EncodedPrimitive(br.ReadUInt64());
                 default:
                     throw new PlaceholderException();
+            }
+        }
+
+        public static ulong LongHashPrimitive(IConvertible obj)
+        {
+            switch (obj.GetTypeCode())
+            {
+                case TypeCode.Boolean:
+                    return (bool)obj ? ulong.MaxValue : 0UL;
+
+                case TypeCode.Byte:
+                case TypeCode.Char:
+                case TypeCode.UInt16:
+                case TypeCode.UInt32:
+                case TypeCode.UInt64:
+                case TypeCode.Int16:
+                case TypeCode.Int32:
+                case TypeCode.Int64:
+                case TypeCode.SByte:
+                    return obj.ToUInt64(null);
+
+                case TypeCode.DateTime:
+                    return (ulong)((DateTime)obj).ToBinary();
+
+                case TypeCode.Decimal:
+                {
+                    var bits = decimal.GetBits((decimal)obj);
+                    
+                    return ((ulong)(uint)bits[0])
+                         ^ ((ulong)(uint)bits[1] << 16)
+                         ^ ((ulong)(uint)bits[2] << 32)
+                         ^ ((ulong)(uint)bits[3] << 48);
+                }
+
+                case TypeCode.Double:
+                    return (ulong)BitConverter.DoubleToInt64Bits((double)obj);
+                
+                case TypeCode.Single:
+                    return (ulong)BitConverter.SingleToInt32Bits((float)obj);
+
+                case TypeCode.String:
+                {
+                    const ulong offset = 14695981039346656037UL;
+                    const ulong prime  = 1099511628211UL;
+
+                    var hash = offset;
+                    
+                    foreach (var c in (string)obj)
+                    {
+                        hash ^= c;
+                        hash *= prime;
+                    }
+                    return hash;
+                }
+                
+                default:
+                    throw new ProgrammerException("Invalid type code.");
             }
         }
     }

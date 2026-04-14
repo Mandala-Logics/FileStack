@@ -29,9 +29,11 @@ namespace MandalaLogics.Packing
     /// <see cref="TakeEnd(int)"/>) return new <see cref="Stitch"/> instances and never
     /// mutate the original, preserving referential safety.
     /// </remarks>
+    [Encodable("stitch")]
     public readonly struct Stitch : IEncodable, IEquatable<Stitch>
     {
         public static readonly Stitch Null = new Stitch(0L, 0);
+        public static readonly int EncodedSize = (int)Null.Encode().WriteToMemoryStream().Length;
         
         public long Start { get; }
         public int Length { get; }
@@ -91,6 +93,23 @@ namespace MandalaLogics.Packing
         {
             return new Stitch(Start + amount, Length);
         }
+        
+        public bool IsContainedWithin(Stitch other)
+        {
+            if (Start >= other.Start && End <= other.End) return true;
+
+            return false;
+        }
+
+        public bool IsContainedWithin(Seam seam)
+        {
+            foreach (var stitch in seam)
+            {
+                if (IsContainedWithin(stitch)) return true;
+            }
+
+            return false;
+        }
 
         public int Write(byte[] buffer, int offset, int count, StreamHandle handle)
         {
@@ -124,6 +143,19 @@ namespace MandalaLogics.Packing
             stream.Write(buffer, offset, w);
 
             return w;
+        }
+
+        public byte[] Read(Stream stream)
+        {
+            if (IsEmpty) return Array.Empty<byte>();
+            
+            stream.Seek(Start, SeekOrigin.Begin);
+
+            var buffer = new byte[Length];
+
+            var r = stream.ReadExactly(buffer, 0, buffer.Length, TimeSpan.MaxValue);
+
+            return r == buffer.Length ? buffer : buffer[..r];
         }
 
         void IEncodable.DoEncode(EncodingHandle handle)

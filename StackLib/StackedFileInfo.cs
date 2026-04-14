@@ -3,6 +3,7 @@ using MandalaLogics.Encoding;
 
 namespace MandalaLogics.Stacking
 {
+    [Encodable("stk_fi")]
     internal sealed class StackedFileInfo : IEncodable, IEquatable<StackedFileInfo>
     {
         public uint BulkId { get; }

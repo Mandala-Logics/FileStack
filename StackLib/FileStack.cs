@@ -4,12 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MandalaLogics.Packing;
-using MandalaLogics.Splice;
 using MandalaLogics.Encoding;
 using MandalaLogics.Database;
 using MandalaLogics.Path;
 using System.Threading;
-using MandalaLogics.Logging;
+using MandalaLogics.Threading;
 
 namespace MandalaLogics.Stacking
 {
@@ -32,7 +31,7 @@ namespace MandalaLogics.Stacking
 
         static FileStack()
         {
-            EncodedObject.RegisterAll(Assembly.GetAssembly(typeof(FileStack)));
+            EncodingRegister.RegisterAll(Assembly.GetAssembly(typeof(FileStack)));
         }
 
         public FileStack(Stream stream)
@@ -43,7 +42,7 @@ namespace MandalaLogics.Stacking
             {
                 _data = new Braid(stream);
 
-                Braid.Strand strand;
+                Braid.BraidStrand strand;
 
                 if (_data.Count == 0)
                 {
@@ -95,19 +94,29 @@ namespace MandalaLogics.Stacking
             return _levelHandler.GetLevel(id);
         }
 
-        public void CreateLevelFromFolder(PathBase root, Logger logger)
+        public ThreadBase CreateLevelFromFolder(PathBase root, CancellationToken cancellationToken, EncodedValue? metadata)
         {
-            logger.LogMessage("Enumerating files.", LogLevel.Warning);
+            var thread = new TaskThread<PathBase, EncodedValue?>(DoCreateLevelFromFolder, root, metadata);
+            thread.Start(cancellationToken);
+
+            return thread;
+        }
+
+        public void DoCreateLevelFromFolder(ThreadController tc, PathBase root, EncodedValue? metadata)
+        {
+            tc.Progress.Report("Enumerating files.");
             
             var tree = root.Tree();
             
-            logger.LogMessage("Stacking files.", LogLevel.Warning);
+            tc.Progress.Report("Stacking files.");
             
             var files = new List<PathBase>();
 
             foreach (var otn in tree)
             {
                 var path = otn.Value;
+
+                if (tc.IsAbortRequested) return;
 
                 if (path.IsFile)
                 {
@@ -117,22 +126,31 @@ namespace MandalaLogics.Stacking
 
             if (files.Count == 0)
             {
-                logger.LogMessage("No files in this dir, level not created.", LogLevel.Important, true);
+                tc.Progress.Report("No files in this dir, level not created.");
+                tc.Return(0);
                 return;
             }
+            
+            tc.Progress.SetMax(files.Count);
 
-            var levelId = _levelHandler.CreateLevel(null);
+            var levelId = _levelHandler.CreateLevel(metadata);
             using var handle = _levelHandler.GetLevel(levelId);
+
+            var n = 0;
 
             foreach (var file in files)
             {
+                if (tc.IsAbortRequested) return;
+
+                n++;
+                
                 try
                 {
                     using var stream = file.OpenStream(FileMode.Open, FileAccess.Read, FileShare.None);
 
                     if (stream.Length == 0)
                     {
-                        logger.LogMessage($"Unable to stack file {file.Path}: file is empty.", LogLevel.Important);
+                        tc.Progress.Report($"Unable to stack file {file.Path}: file is empty.", n);
                         continue;
                     }
                     else
@@ -142,12 +160,14 @@ namespace MandalaLogics.Stacking
                 }
                 catch (PathException e)
                 {
-                    logger.LogMessage($"Unable to stack file {file.Path}: {e.Message}", LogLevel.Important, true);
+                    tc.Progress.Report($"Unable to stack file {file.Path}: {e.Message}", n);
                     continue;
                 }
                 
-                logger.LogMessage($"Stacked file {file.Path}", LogLevel.Verbose);
+                tc.Progress.Report($"Stacked file {file.Path}", n);
             }
+            
+            tc.Return(levelId);
         }
 
         public void Dispose()
@@ -157,7 +177,6 @@ namespace MandalaLogics.Stacking
             _header.Dispose();
             
             _data.Dispose();
-            
         }
     }
 }

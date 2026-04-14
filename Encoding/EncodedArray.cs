@@ -35,6 +35,8 @@ namespace MandalaLogics.Encoding
             }
         }
 
+        public override bool IsFixedSize => arr is { };
+
         private readonly Array? arr;
         private readonly IEnumerable? iEnum;
         private readonly TypeCode elementType; 
@@ -51,6 +53,53 @@ namespace MandalaLogics.Encoding
             this.elementType = elementType;
         }
 
+        public override ulong GetLongHash()
+        {
+            var hashCode = new LongHashCode();
+            
+            if (arr is { })
+            {
+                if (elementType == TypeCode.Object)
+                {
+                    foreach (var o in arr)
+                    {
+                        var ie = (IEncodable)o;
+
+                        var eo = EncodedObject.Create(ie);
+                            
+                        hashCode.Add(eo.GetLongHash());
+                    }
+                }
+                else
+                {
+                    foreach (var o in arr)
+                    {
+                        hashCode.Add((IConvertible)o);
+                    }
+                }
+            }
+            else if (iEnum is { })
+            {
+                foreach (var o in iEnum)
+                {
+                    if (elementType == TypeCode.Object)
+                    {
+                        var ie = (IEncodable)o;
+
+                        var eo = EncodedObject.Create(ie);
+                            
+                        hashCode.Add(eo.GetLongHash());
+                    }
+                    else
+                    {
+                        hashCode.Add((IConvertible)o);
+                    }
+                }
+            }
+
+            return hashCode.ToUInt64();
+        }
+
         public static EncodedArray Create(Array val)
         {
             if (val.Rank != 1) { throw new NotSupportedException("Only 1D arrays supported."); }
@@ -65,13 +114,13 @@ namespace MandalaLogics.Encoding
 
                 return new EncodedArray(val, tc);
             }
-            else if (EncodedObject.EncodingType.IsAssignableFrom(elementType)) //array of IEncodable
+            else if (EncodingRegister.EncodingType.IsAssignableFrom(elementType)) //array of IEncodable
             {
                 return new EncodedArray(val, TypeCode.Object);
             }
             else
             {
-                throw new NotSupportedException($"Array of {elementType.Name} is not supported.");
+                throw new NotSupportedException($"Array of {elementType?.Name} is not supported.");
             }
         }
 
@@ -90,7 +139,7 @@ namespace MandalaLogics.Encoding
                 var tc = Type.GetTypeCode(elementType);
 
                 if (tc == TypeCode.DBNull || tc == TypeCode.Empty) { throw new NotSupportedException("DBNull type and empty type are not supported."); }
-                else if (tc == TypeCode.Object && EncodedObject.EncodingType.IsAssignableFrom(elementType)) { throw new NotSupportedException("A list of objects, other than iEncodable, is not supported."); } 
+                else if (tc == TypeCode.Object && EncodingRegister.EncodingType.IsAssignableFrom(elementType)) { throw new NotSupportedException("A list of objects, other than iEncodable, is not supported."); } 
 
                 return new EncodedArray(val, tc);
             }
@@ -102,62 +151,72 @@ namespace MandalaLogics.Encoding
 
         internal override void WriteBytes(BinaryWriter bw)
         {
-            if (arr is Array)
+            if (arr is { })
             {
                 bw.Write(arr.Length);
 
-                if (elementType == TypeCode.Object)
+                switch (elementType)
                 {
-                    foreach (var o in arr)
+                    case TypeCode.Object:
                     {
-                        var ie = (IEncodable)o;
-
-                        var eo = EncodedObject.Create(ie);
-
-                        eo.WriteBytes(bw);
-                    }
-                }
-                else if (elementType == TypeCode.String)
-                {
-                    foreach (var s in (string[])arr)
-                    {
-                        bw.Write(s);
-                    }
-                }
-                else if (elementType == TypeCode.Decimal)
-                {
-                    foreach (decimal d in (decimal[])arr) bw.Write(d);
-                }
-                else if (elementType == TypeCode.DateTime)
-                {
-                    foreach (DateTime dt in (DateTime[])arr) bw.Write(dt.ToBinary());
-                }
-                else //array of primitives
-                {
-                    unsafe
-                    {
-                        var h = GCHandle.Alloc(arr, GCHandleType.Pinned);
-
-                        int len = Buffer.ByteLength(arr);
-
-                        Span<byte> b;
-
-                        try
+                        foreach (var o in arr)
                         {
-                            void* p = h.AddrOfPinnedObject().ToPointer();
+                            var ie = (IEncodable)o;
 
-                            b = new Span<byte>(p, len);
+                            var eo = EncodedObject.Create(ie);
 
-                            bw.BaseStream.Write(b);
+                            eo.WriteBytes(bw);
                         }
-                        finally
-                        {
-                            h.Free();
-                        }
+
+                        break;
                     }
+                    case TypeCode.String:
+                    
+                        foreach (var s in (string[])arr)
+                        {
+                            bw.Write(s);
+                        }
+
+                        break;
+                    
+                    case TypeCode.Decimal:
+                    
+                        foreach (decimal d in (decimal[])arr) bw.Write(d);
+                        break;
+                    
+                    case TypeCode.DateTime:
+                    
+                        foreach (DateTime dt in (DateTime[])arr) bw.Write(dt.ToBinary());
+                        break;
+                    
+                    default: //array of primitives
+                        
+                        unsafe
+                        {
+                            var h = GCHandle.Alloc(arr, GCHandleType.Pinned);
+
+                            int len = Buffer.ByteLength(arr);
+
+                            Span<byte> b;
+
+                            try
+                            {
+                                void* p = h.AddrOfPinnedObject().ToPointer();
+
+                                b = new Span<byte>(p, len);
+
+                                bw.BaseStream.Write(b);
+                            }
+                            finally
+                            {
+                                h.Free();
+                            }
+                        }
+
+                        break;
                 }
             }
-            else if (iEnum is IEnumerable)
+            else if (iEnum is { })
             {
                 bw.Write(Count);
 
@@ -265,7 +324,7 @@ namespace MandalaLogics.Encoding
                     {
                         TypeCode.DateTime => new DateTime(br.ReadInt64()),
                         TypeCode.Decimal => br.ReadDecimal(),
-                        TypeCode.Object => (IEncodable)EncodedObject.ReadOject(br).Value,
+                        TypeCode.Object => (IEncodable)EncodedObject.ReadObject(br).Value,
                         TypeCode.String => br.ReadString(),
                         _ => throw new PlaceholderException(),
                     };

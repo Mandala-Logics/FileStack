@@ -2,6 +2,7 @@ using MandalaLogics.Encoding;
 
 namespace MandalaLogics.Stacking
 {
+    [Encodable("stk_hdr")]
     public class StackHeader : IEncodable
     {
         public int Version { get; }

@@ -28,7 +28,7 @@ namespace MandalaLogics.Path
 
         /// <summary>
         /// Describes the structural rules for parsing and constructing paths of a specific format
-        /// (e.g. Linux, Windows, UNC, or custom virtual paths).
+        /// (e.g. OS, Windows, UNC, or custom virtual paths).
         /// </summary>
         /// <param name="startToken">
         /// The token that identifies an absolute path (for example "/" on Unix or "\\" for UNC paths).

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
-using MandalaLogics.Splice;
+using MandalaLogics.Database;
+using MandalaLogics.Path.Hashing;
 
 namespace MandalaLogics.Stacking
 {

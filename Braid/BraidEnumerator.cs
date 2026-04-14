@@ -5,9 +5,9 @@ namespace MandalaLogics.Packing
 {
     public sealed partial class Braid
     {
-        public class BraidEnumerator : IEnumerator<Strand>
+        public class BraidEnumerator : IEnumerator<BraidStrand>
         {
-            public Strand Current { get; private set; } = null!;
+            public BraidStrand Current { get; private set; } = null!;
 
             object? IEnumerator.Current => Current;
 

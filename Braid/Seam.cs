@@ -134,7 +134,7 @@ namespace MandalaLogics.Packing
             {
                 stream.Seek(stitch.Start, SeekOrigin.Begin);
 
-                var r = stream.Read(buffer, n, stitch.Length);
+                var r = stream.ReadExactly(buffer, n, stitch.Length, TimeSpan.MaxValue);
 
                 n += r;
 

@@ -9,7 +9,9 @@
     <ItemGroup>
       <ProjectReference Include="..\Braid\Braid.csproj" />
       <ProjectReference Include="..\Database\Database.csproj" />
+      <ProjectReference Include="..\Locking\Locking.csproj" />
       <ProjectReference Include="..\Path\Path.csproj" />
+      <ProjectReference Include="..\Threading\Threading.csproj" />
     </ItemGroup>
 
 </Project>

@@ -1,8 +1,10 @@
 using System;
 using MandalaLogics.Encoding;
+using MandalaLogics.Path.Hashing;
 
 namespace MandalaLogics.Stacking
 {
+    [Encodable("bulk_info")]
     internal sealed class BulkDataInfo : IEncodable, IEquatable<BulkDataInfo>
     {
         public uint BulkId { get; }

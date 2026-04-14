@@ -5,6 +5,7 @@ using MandalaLogics.Streams;
 
 namespace MandalaLogics.Packing
 {
+    [Encodable("knt_hdr")]
     public class KnotHeader : IEncodable, IEquatable<KnotHeader>
     {
         public static readonly int EncodedSize = (int)new KnotHeader(Stitch.Null).Encode().WriteToMemoryStream().Length;
@@ -54,17 +55,12 @@ namespace MandalaLogics.Packing
 
         public bool Equals(KnotHeader? other)
         {
-            if (other is null) return false;
-            if (ReferenceEquals(this, other)) return true;
-            return Stitch.Equals(other.Stitch);
+            return Stitch.Equals(other?.Stitch);
         }
 
         public override bool Equals(object? obj)
         {
-            if (obj is null) return false;
-            if (ReferenceEquals(this, obj)) return true;
-            if (obj.GetType() != GetType()) return false;
-            return Equals((KnotHeader)obj);
+            return obj is KnotHeader kh && Equals(kh);
         }
 
         public override int GetHashCode()

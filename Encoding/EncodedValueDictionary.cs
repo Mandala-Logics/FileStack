@@ -4,6 +4,7 @@ using System.Collections.Generic;
 
 namespace MandalaLogics.Encoding
 {
+    [Encodable("enc_dict")]
     public sealed class EncodedValueDictionary : IDictionary<string, EncodedValue>, IEncodable
     {
         public EncodedValue this[string key] { get => dict[key]; set => dict[key] = value; }

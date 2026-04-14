@@ -1,56 +1,45 @@
 using System;
 using System.IO;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using MandalaLogics.Encoding;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
+    [Encodable("spl_hdr")]
     public class SpliceHeader : IEncodable
     {
-        public static readonly long EncodedSize = new SpliceHeader().Encode().WriteToMemoryStream().Length;
-        
         public int BlockCount { get; internal set; }
-        public byte[] TypeHash { get; }
-
-        private SpliceHeader()
-        {
-            TypeHash = new byte[32];
-        }
+        public string TypeKey { get; }
         
         internal SpliceHeader(Type type)
         {
             BlockCount = 0;
+            
+            var key = EncodingRegister.GetKey(type);
 
-            var bytes = System.Text.Encoding.UTF8.GetBytes(type.Name);
+            if (key is null)
+                throw new EncodingException($"Type {type.FullName} is not registered.");
 
-            using var hasher = SHA256.Create();
-
-            TypeHash = hasher.ComputeHash(bytes);
+            TypeKey = key;
         }
         
         public SpliceHeader(DecodingHandle handle)
         {
             BlockCount = handle.Next<int>();
-            TypeHash = handle.Next<byte[]>();
+            TypeKey = handle.Next<string>();
         }
 
-        public bool CompareType(Type type)
+        public void CompareType(Type type)
         {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(type.Name);
+            var key = EncodingRegister.GetKey(type);
 
-            using var hasher = SHA256.Create();
-
-            var hash = hasher.ComputeHash(bytes);
-
-            return hash.SequenceEqual(TypeHash);
+            if (key != TypeKey)
+                throw new TypeMismatchException(type, TypeKey);
         }
 
         void IEncodable.DoEncode(EncodingHandle handle)
         {
             handle.Append(BlockCount);
-            handle.Append(TypeHash);
+            handle.Append(TypeKey);
         }
 
         public void WriteSelf(Stream stream)

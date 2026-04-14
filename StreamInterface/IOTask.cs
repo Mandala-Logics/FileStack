@@ -43,7 +43,7 @@ namespace MandalaLogics.Streams
             }
             catch (AggregateException e)
             {
-                throw e.InnerException;
+                throw e.InnerException!;
             }
             finally
             {

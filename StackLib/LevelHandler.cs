@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MandalaLogics.Database;
 using MandalaLogics.Encoding;
-using MandalaLogics.Splice;
+using MandalaLogics.Locking;
 
 namespace MandalaLogics.Stacking
 {
@@ -16,7 +16,8 @@ namespace MandalaLogics.Stacking
             
             private readonly FileStack _owner;
             private Splice<LevelInfo> Db => _owner._levelDb;
-            private readonly EntryTracker<uint> _levelTracker = new EntryTracker<uint>();
+
+            private readonly Leaser<uint, LevelHandle> _openLevels = new Leaser<uint, LevelHandle>();
 
             public int Count => Db.Count;
 
@@ -43,11 +44,38 @@ namespace MandalaLogics.Stacking
             {
                 if (!IsValidId(levelId)) throw new ArgumentException("Level ID provided is not valid.");
 
-                if (!_levelTracker.EnterLock(levelId, WaitTime)) throw new InvalidOperationException("A handle for this level is open, cannot modify this level.");
+                if (_openLevels.TryGet(levelId, out var handle))
+                {
+                    return handle;
+                }
+                else
+                {
+                    var li = Db.GetHandle(li => levelId.Equals(li.LevelId));
 
-                var li = Db.GetHandle(li => levelId.Equals(li.LevelId));
+                    var level = new LevelHandle(_owner, levelId, li);
 
-                return new LevelHandle(_owner, levelId, li);
+                    _openLevels.TryAdd(levelId, handle);
+
+                    return level;
+                }
+            }
+
+            public Lease<LevelHandle> GetLevelHandleLease(uint levelId)
+            {
+                if (!IsValidId(levelId)) throw new ArgumentException("Level ID provided is not valid.");
+                
+                if (_openLevels.TryTakeLease(levelId, out var handle))
+                {
+                    return handle;
+                }
+                else
+                {
+                    var li = Db.GetHandle(li => levelId.Equals(li.LevelId));
+
+                    var level = new LevelHandle(_owner, levelId, li);
+
+                    return _openLevels.AddAndTakeLease(levelId, level);
+                }
             }
 
             public void DeleteLevel(uint levelId)
@@ -67,11 +95,6 @@ namespace MandalaLogics.Stacking
                 }
                 
                 _owner._data.DestroyStrand(handle.LevelId);
-            }
-
-            public void LevelHandleClosed(uint levelId)
-            {
-                _levelTracker.ExitLock(levelId);
             }
 
             public IEnumerator<LevelInfo> GetEnumerator() => Db.GetEnumerator();

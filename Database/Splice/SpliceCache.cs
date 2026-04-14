@@ -2,13 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MandalaLogics.Encoding;
-using MandalaLogics.Weave;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
     internal class SpliceCache
     {
-        private Dictionary<int, CachedEncodable> _cache = new Dictionary<int, CachedEncodable>();
+        private readonly Dictionary<int, CachedEncodable> _cache = new Dictionary<int, CachedEncodable>();
         
         private readonly int _maxSize;
         private int _size = 0;

@@ -87,6 +87,7 @@ namespace MandalaLogics.StringValidation
         Number = AllowNumbers | AllowNumberChars | AutoTrim
     }
 
+    [Encodable("string_tmp")]
     public sealed class StringTemplate : IEncodable, IEquatable<StringTemplate>
     {
         

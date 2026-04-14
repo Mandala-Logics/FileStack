@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Encoding\Encoding.csproj" />
+    <ProjectReference Include="..\Locking\Locking.csproj" />
   </ItemGroup>
 
 </Project>

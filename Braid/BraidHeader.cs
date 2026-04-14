@@ -4,10 +4,9 @@ using MandalaLogics.Streams;
 
 namespace MandalaLogics.Packing
 {
+    [Encodable("brd_hdr")]
     public class BraidHeader : IEncodable
     {
-        public static readonly long EncodedSize = new BraidHeader().Encode().WriteToMemoryStream().Length;
-        
         public int KnotCount { get; internal set; }
         public uint LastStrandId { get; internal set; }
 

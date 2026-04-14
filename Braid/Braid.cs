@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading;
 using MandalaLogics.Encoding;
+using MandalaLogics.Locking;
 using MandalaLogics.Streams;
 
 namespace MandalaLogics.Packing
@@ -15,12 +16,12 @@ namespace MandalaLogics.Packing
     /// </summary>
     /// <remarks>
     /// <see cref="Braid"/> owns the backing stream and maintains an index of <see cref="KnotHeader"/> records.
-    /// Each strand is mapped onto a sequence of knot extents and exposed as a <see cref="Stream"/> via <see cref="Strand"/>.
+    /// Each strand is mapped onto a sequence of knot extents and exposed as a <see cref="Stream"/> via <see cref="BraidStrand"/>.
     /// </remarks>
-    public sealed partial class Braid : IReadOnlyList<Braid.Strand>
+    public sealed partial class Braid : IReadOnlyList<Braid.BraidStrand>
     {
-        public const int MinKnotSize = 4 * 1024;
-        public const int MaxKnotSize = 32 * 1024;
+        private const int MinKnotSize = 16 * 1024;
+        private const int MaxKnotSize = 32 * 1024;
         
         private readonly StreamInterface _streamInterface;
         private readonly BraidHeader _header;
@@ -33,7 +34,9 @@ namespace MandalaLogics.Packing
         public bool Disposed => _streamInterface.Disposed;
         public int Count => _strands.Count;
 
-        public Strand this[int index]
+        private readonly Leaser<uint, BraidStrand> _openStrands = new Leaser<uint, BraidStrand>();
+
+        public BraidStrand this[int index]
         {
             get
             {
@@ -47,7 +50,7 @@ namespace MandalaLogics.Packing
 
         static Braid()
         {
-            EncodedObject.RegisterAll(Assembly.GetAssembly(typeof(Stitch)));
+            EncodingRegister.RegisterAll(Assembly.GetAssembly(typeof(Stitch)));
         }
         
         public Braid(Stream stream)
@@ -121,7 +124,7 @@ namespace MandalaLogics.Packing
             }
         }
 
-        public Strand GetStrand(uint id)
+        public BraidStrand GetStrand(uint id)
         {
             if (Disposed) throw new ObjectDisposedException(nameof(Braid));
             
@@ -131,7 +134,19 @@ namespace MandalaLogics.Packing
 
             try
             {
-                return new Strand(this, id);
+                if (_openStrands.TryGet(id, out var strand))
+                {
+                    return strand;
+                }
+                else
+                {
+                    var s = new BraidStrand(this, id);
+
+                    _openStrands.TryAdd(id, s);
+
+                    return s;
+                }
+                
             }
             finally
             {
@@ -139,7 +154,7 @@ namespace MandalaLogics.Packing
             }
         }
 
-        public Strand CreateStrand(Stream stream)
+        public BraidStrand CreateStrand(Stream stream)
         {
             if (Disposed) throw new ObjectDisposedException(nameof(Braid));
             
@@ -167,11 +182,13 @@ namespace MandalaLogics.Packing
 
                 knot.Stitch.Write(buffer, 0, r, handle);
 
-                var strand = new Strand(this, knot.StrandId);
+                var strand = new BraidStrand(this, knot.StrandId);
 
                 strand.Position = r;
                 
                 stream.CopyTo(strand);
+                
+                _openStrands.TryAdd(_header.LastStrandId, strand);
 
                 return strand;
             }
@@ -184,7 +201,7 @@ namespace MandalaLogics.Packing
         /// <summary>
         /// Creates a strand large enough to store an encoded object.
         /// </summary>
-        public Strand CreateStrand(IEncodable obj)
+        public BraidStrand CreateStrand(IEncodable obj)
         {
             if (Disposed) throw new ObjectDisposedException(nameof(Braid));
             
@@ -211,11 +228,13 @@ namespace MandalaLogics.Packing
                 
                 _strands.Add(id);
 
-                var strand = new Strand(this, id);
+                var strand = new BraidStrand(this, id);
                 
                 ms.CopyTo(strand);
 
                 strand.Seek(0L, SeekOrigin.Begin);
+
+                _openStrands.TryAdd(id, strand);
 
                 return strand;
             }
@@ -228,7 +247,7 @@ namespace MandalaLogics.Packing
         /// <summary>
         /// Creates a strand with the minimum possible capacity.
         /// </summary>
-        public Strand CreateStrand()
+        public BraidStrand CreateStrand()
         {
             if (Disposed) throw new ObjectDisposedException(nameof(Braid));
             
@@ -251,9 +270,12 @@ namespace MandalaLogics.Packing
                 
                 knot.WriteSelf(handle);
                 
+                var strand = new BraidStrand(this, id);
+                
                 _strands.Add(id);
+                _openStrands.TryAdd(id, strand);
 
-                return new Strand(this, id);
+                return strand;
             }
             finally
             {
@@ -287,6 +309,7 @@ namespace MandalaLogics.Packing
                 }
                 
                 _strands.Clear();
+                _openStrands.Clear();
             }
             finally
             {
@@ -319,6 +342,7 @@ namespace MandalaLogics.Packing
                 }
 
                 _strands.Remove(id);
+                _openStrands.Remove(id);
             }
             finally
             {
@@ -397,7 +421,7 @@ namespace MandalaLogics.Packing
             _streamInterface.Dispose();
         }
 
-        public IEnumerator<Strand> GetEnumerator()
+        public IEnumerator<BraidStrand> GetEnumerator()
         {
             return new BraidEnumerator(this);
         }

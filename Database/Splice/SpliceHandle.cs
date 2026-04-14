@@ -1,6 +1,6 @@
 using System;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
     public sealed partial class Splice<T>
     {
@@ -35,7 +35,7 @@ namespace MandalaLogics.Splice
                 
                 try
                 {
-                    if (Owner._blocks[_blockIndex] is ChainHeader ch)
+                    if (Owner._blocks[_blockIndex] is SpliceChainHeader ch)
                     {
                         Owner.DestroyChain(ch.Ordinal);
                         Owner._cache.Remove(ch.Ordinal);
@@ -57,7 +57,7 @@ namespace MandalaLogics.Splice
                 
                 try
                 {
-                    if (Owner._blocks[_blockIndex] is ChainHeader ch)
+                    if (Owner._blocks[_blockIndex] is SpliceChainHeader ch)
                     {
                         Owner.WriteToChain(ch.Ordinal, Value);
                     }

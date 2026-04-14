@@ -10,11 +10,12 @@ namespace MandalaLogics.Encoding
     {
         public static readonly Type ConvertableType = typeof(IConvertible);
 
-        public const int MaxEncodedLength = 32768;
+        public const int MaxEncodedLength = 32 * 1024 * 1024;
 
         public abstract object Value {get;}
         public abstract TypeCode TypeCode {get;}
         public abstract EncodedValueType EncodedType {get;}
+        public abstract bool IsFixedSize { get; }
 
         static EncodedValue()
         {
@@ -88,6 +89,11 @@ namespace MandalaLogics.Encoding
             return ms;
         }
 
+        /// <summary>
+        /// Gets a persistant hash code for this encoded value.
+        /// </summary>
+        public abstract ulong GetLongHash();
+
         internal abstract void WriteBytes(BinaryWriter bw);
 
         public static int Read(Socket socket, out EncodedValue value)
@@ -106,17 +112,50 @@ namespace MandalaLogics.Encoding
 
             if (r != buffer.Length) { throw new EncodingException("Failed to read enough bytes from socket."); }
 
-            using var br = new BinaryReader(new MemoryStream(buffer, false), System.Text.Encoding.UTF8, false);
+            using var br = new BinaryReader(new MemoryStream(buffer, false), System.Text.Encoding.UTF8, true);
 
             value = et switch
             {
                 EncodedValueType.Primitive => EncodedPrimitive.ReadPrimitive(tc, br),
                 EncodedValueType.Array => EncodedArray.ReadArray(tc, br),
-                EncodedValueType.Object => EncodedObject.ReadOject(br),
+                EncodedValueType.Object => EncodedObject.ReadObject(br),
                 _ => throw new PlaceholderException(),
             };
 
             return r + sizeof(int) * 2 + sizeof(byte);
+        }
+
+        public static EncodingHeader ReadHeader(Stream stream)
+        {
+            var et = ReadEncodedType(stream);
+
+            var tc = ReadTypeCode(stream);
+
+            int len;
+
+            try { len = stream.ReadInt32(); }
+            catch (EndOfStreamException) { throw new EncodingException("End of stream."); }
+
+            if (len < 0 || len > MaxEncodedLength) { throw new EncodingException("Invalid length read."); }
+
+            using var br = new BinaryReader(stream, System.Text.Encoding.UTF8, true);
+
+            Type? type;
+
+            if (et == EncodedValueType.Object)
+            {
+                var name = br.ReadString();
+
+                type = EncodingRegister.GetType(name);
+
+                if (type is null) throw new EncodingException($"The type name read ({name}) was not registered.");
+            }
+            else
+            {
+                type = null;
+            }
+
+            return new EncodingHeader(tc, et, type);
         }
         
         public static int Read(MemoryStream stream, out EncodedValue value)
@@ -132,13 +171,13 @@ namespace MandalaLogics.Encoding
 
             if (len < 0 || len > MaxEncodedLength) { throw new EncodingException("Invalid length read."); }
 
-            using var br = new BinaryReader(stream, System.Text.Encoding.UTF8, false);
+            using var br = new BinaryReader(stream, System.Text.Encoding.UTF8, true);
 
             value = et switch
             {
                 EncodedValueType.Primitive => EncodedPrimitive.ReadPrimitive(tc, br),
                 EncodedValueType.Array => EncodedArray.ReadArray(tc, br),
-                EncodedValueType.Object => EncodedObject.ReadOject(br),
+                EncodedValueType.Object => EncodedObject.ReadObject(br),
                 _ => throw new PlaceholderException(),
             };
             return len + sizeof(int) * 2 + sizeof(byte);
@@ -169,7 +208,7 @@ namespace MandalaLogics.Encoding
             {
                 EncodedValueType.Primitive => EncodedPrimitive.ReadPrimitive(tc, br),
                 EncodedValueType.Array => EncodedArray.ReadArray(tc, br),
-                EncodedValueType.Object => EncodedObject.ReadOject(br),
+                EncodedValueType.Object => EncodedObject.ReadObject(br),
                 _ => throw new PlaceholderException(),
             };
             return r + sizeof(int) * 2 + sizeof(byte);

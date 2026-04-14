@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
+using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -30,13 +30,13 @@ namespace MandalaLogics.Path
     {
         public event PathChangedEventHandler? PathChanged;
 
-        static readonly Regex extRegex = new Regex(@"(?<name>.+)\.(?<ext>[^\.]+)$", RegexOptions.Compiled);
+        public static readonly Regex ExtRegex = new Regex(@"(?<name>.+)\.(?<ext>[^\.]+)$", RegexOptions.Compiled);
         public static StringTemplate ExtTemplate => StringTemplate.FileExtension;
         public static StringTemplate NameTemplate => StringTemplate.FileName;
         public static string[] LengthUnits { get; } = new string[] { "B", "kB", "MB", "GB", "TB", "YB", "PB" };
 
-        public string this[int index] => pathElements[index];        
-        public int Count => pathElements.Count;
+        public string this[int index] => _pathElements[index];        
+        public int Count => _pathElements.Count;
         public DestType EndType { get; private set; } = DestType.Unknown;
         public PathType Type { get; private set; } = PathType.Unknown;
         public string Extension { get; private set; } = string.Empty;
@@ -53,8 +53,8 @@ namespace MandalaLogics.Path
         {
             get
             {
-                if (HasExtension) return string.Join(".", pathElements[pathElements.Count - 1], Extension);
-                else return pathElements[^1];
+                if (HasExtension) return string.Join(".", _pathElements[^1], Extension);
+                else return _pathElements[^1];
             }
         }
         public PathStructure Structure { get; }
@@ -118,20 +118,20 @@ namespace MandalaLogics.Path
             {
                 if (Structure.HasStartToken) 
                 {
-                    return pathElements.Count == 0 && Type == PathType.Absolute;
+                    return _pathElements.Count == 0 && Type == PathType.Absolute;
                 }
                 else 
                 {
-                    return pathElements.Count == 1 && Type == PathType.Absolute;
+                    return _pathElements.Count == 1 && Type == PathType.Absolute;
                 }
             }            
         }
 
         protected bool? exists { get; private set; }
         protected AccessLevel? access { get; private set; }
-        protected string path { get; private set; } = null;    
+        protected string? path { get; private set; } = null;
 
-        private List<string> pathElements;
+        private List<string> _pathElements;
 
         /// <summary>
         /// The basic constructor for turning a string into a path object. Reccomend cleaning/checking the string before passing.
@@ -213,7 +213,7 @@ namespace MandalaLogics.Path
 
                 if (mode != DestType.Dir)
                 {
-                    var m = extRegex.Match(s[^1]);
+                    var m = ExtRegex.Match(s[^1]);
 
                     if (m.Success)
                     {
@@ -243,9 +243,9 @@ namespace MandalaLogics.Path
                 throw new PathParsingException($"Invalid path ({path}); first element of path must be {ps.FirstElementLength} charachters long.");
             }
 
-            pathElements = ls;
+            _pathElements = ls;
 
-            if (pathElements.Count < Structure.RootLength) throw new PathParsingException($"Path element length is less than root length({Structure.RootLength}): {path}");        
+            if (_pathElements.Count < Structure.RootLength) throw new PathParsingException($"Path element length is less than root length({Structure.RootLength}): {path}");        
 
             if (checkType && Type == PathType.Absolute)
             {
@@ -261,13 +261,14 @@ namespace MandalaLogics.Path
                 if (checkedType == DestType.Unknown)
                 {
                     exists = false;
+                    EndType = mode;
                 }
                 else
                 {
                     if (checkedType == DestType.Dir && HasExtension)
                     {
-                        pathElements.RemoveAt(pathElements.Count - 1);
-                        pathElements.Add(string.Join(".", pathElements.Last(), Extension));
+                        _pathElements.RemoveAt(_pathElements.Count - 1);
+                        _pathElements.Add(string.Join(".", _pathElements.Last(), Extension));
                         Extension = string.Empty;
                         exists = true;
                     }
@@ -293,7 +294,7 @@ namespace MandalaLogics.Path
             Structure = path.Structure;
             Type = path.Type;
             EndType = path.EndType;
-            pathElements = path.pathElements.AsEnumerable().ToList();
+            _pathElements = path._pathElements.AsEnumerable().ToList();
             Extension = path.Extension;
         }
 
@@ -304,13 +305,13 @@ namespace MandalaLogics.Path
             
             Type = handle.Next<PathType>();
             Extension = handle.Next<string>();
-            pathElements = new List<string>(handle.Next<string[]>());
+            _pathElements = new List<string>(handle.Next<string[]>());
         }
         public virtual void DoEncode(EncodingHandle encodedObj)
         {
             encodedObj.Append(Type);
             encodedObj.Append(Extension);
-            encodedObj.Append(pathElements);
+            encodedObj.Append(_pathElements);
         }
 
         /// <summary>
@@ -338,12 +339,10 @@ namespace MandalaLogics.Path
         /// <summary>
         /// Gets all dirs in the directory.
         /// </summary>
-        /// <param name="pattern">String to match with * being the wildcard.</param>
         public abstract IEnumerable<PathBase> EnumerateDirs();
         /// <summary>
         /// Gets all files in the directory.
         /// </summary>
-        /// <param name="pattern">String to match with * being the wildcard.</param>
         public abstract IEnumerable<PathBase> EnumerateFiles();
         /// <summary>
         /// Creates a copy of this path which is of the same derived type of class.
@@ -362,13 +361,12 @@ namespace MandalaLogics.Path
         /// Stops watching the path and stops firing the PathChanged event.
         /// </summary>
         public abstract void StopWatchingPath();
-        public abstract long FileLength();
         public abstract PathBase GetWorkingDirectory();
 
         /// <summary>
-        /// Allows the implimenting class to directly set the existance of the file/dir, for example: if the file is deleted.
+        /// Allows the implementing class to directly set the existence of the file/dir, for example: if the file is deleted.
         /// </summary>
-        /// <param name="value">A nullable bool. Null indicates that the existance of the file/dir is unknown.</param>
+        /// <param name="value">A nullable bool. Null indicates that the existence of the file/dir is unknown.</param>
         protected void SetExists(bool? value) { exists = value; }
         protected void SetAccess(AccessLevel? value) { access = value; }
         protected void SetEndType(DestType value) { EndType = value; }
@@ -377,6 +375,103 @@ namespace MandalaLogics.Path
             PathChanged?.Invoke(this, args);
         }
 
+        public FileInfo GetFileInfo()
+        {
+            if (!IsFile)
+                throw new PathException("Cannot get file info for a non-file path.");
+
+            FileInfo fi;
+
+            try
+            {
+                fi = new FileInfo(Path);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                SetExists(true);
+                throw new PathAccessException("No permission to get file info.");
+            }
+            catch (SecurityException)
+            {
+                SetExists(true);
+                throw new PathAccessException("No permission to get file info.");
+            }
+            
+            SetExists(fi.Exists);
+
+            return !fi.Exists ? throw new PathException("Path does not exist.") : fi;
+        }
+
+        public DirectoryInfo GetDirectoryInfo()
+        {
+            if (!IsDir)
+                throw new PathException("Cannot get directory info for a non-dir path.");
+
+            DirectoryInfo di;
+            
+            try
+            {
+                di = new DirectoryInfo(Path);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                SetExists(true);
+                throw new PathAccessException("No permission to get dir info.");
+            }
+            catch (SecurityException)
+            {
+                SetExists(true);
+                throw new PathAccessException("No permission to get dir info.");
+            }
+            
+            SetExists(di.Exists);
+            
+            return !di.Exists ? throw new PathException("Path does not exist.") : di;
+        }
+
+        /// <summary>
+        /// Determines if the current path is contained within (i.e. a descendant) of the other path.
+        /// </summary>
+        public bool IsDescendentOf(PathBase ancestor)
+        {
+            return ancestor.Count < Count && StartsWith(ancestor);
+        }
+
+        /// <summary>
+        /// Returns true if this path contains the path give in the argument, i.e. this path is the ancestor of the
+        /// given path.
+        /// </summary>
+        public bool IsAncestorOf(PathBase descendant)
+        {
+            return Count < descendant.Count && descendant.StartsWith(this);
+        }
+
+        public byte[] ReadAllBytes()
+        {
+            if (!IsFile) throw new PathException("Cannot get all bytes for a non-file path.");
+
+            if (!Exists) throw new PathException("Cannot get all bytes; path does not exist.");
+
+            using var stream = OpenStream(FileMode.Open, FileAccess.Read, FileShare.None);
+
+            var buffer = new byte[stream.Length];
+
+            stream.ReadExactly(buffer, 0, buffer.Length, TimeSpan.MaxValue);
+
+            return buffer;
+        }
+
+        public void SetAllBytes(FileMode fileMode, byte[] buffer)
+        {
+            if (!IsFile) throw new PathException("Cannot set all bytes for a non-file path.");
+
+            using var stream = OpenStream(fileMode, FileAccess.ReadWrite, FileShare.None);
+            
+            stream.Write(buffer);
+            
+            stream.SetLength(buffer.Length);
+        }
+        
         /// <summary>
         /// Returns true if this path could be created if it does not exist, i.e. if the path is absolute and the containting dir exists.
         /// Use the Exists property to confirm if the path exists already.
@@ -413,6 +508,7 @@ namespace MandalaLogics.Path
                 }
             }
         }
+        
         public virtual ObjectTreeNode<PathBase> Tree()
         {
             if (!IsDir) { throw new PathException("Cannot get a path tree for a file path."); }
@@ -435,7 +531,7 @@ namespace MandalaLogics.Path
             {
                 dir = node.Value.Dir();
 
-                foreach (PathBase pb in dir)
+                foreach (var pb in dir)
                 {
                     node = node.AddChild(pb);
 
@@ -446,7 +542,7 @@ namespace MandalaLogics.Path
             return root;
         }
         /// <summary>
-        /// Copies this file path to the distination path.
+        /// Copies this file path to the destination path.
         /// </summary>
         /// <param name="dest">The destination path at which to create the copy.</param>
         /// <param name="overWrite">Indicates that if the file exists then it should be overwritten.</param>
@@ -518,7 +614,7 @@ namespace MandalaLogics.Path
             }
             catch (PathAccessException e)
             {
-                src.Dispose();
+                await src.DisposeAsync();
                 dst?.Dispose();
                 throw new PathAccessException(this, $"Failed to open stream for copying.", e);
             }
@@ -531,8 +627,8 @@ namespace MandalaLogics.Path
             catch (Exception e) { throw new IOException("Failed to copy file.", e); }
             finally
             {
-                dst.Dispose();
-                src.Dispose();
+                await dst.DisposeAsync();
+                await src.DisposeAsync();
             }
         }
         /// <summary>
@@ -557,12 +653,12 @@ namespace MandalaLogics.Path
                     {
                         IEnumerable<PathBase> deletePaths = dst.Dir();
 
-                        foreach (PathBase path in deletePaths)
+                        foreach (var path in deletePaths)
                         {
                             if (!path.Access.HasFlag(AccessLevel.Delete)) throw new PathAccessException(dst, "Cannot copy to this dir because it already exists and/or one or more file/folders cannot be deleted.");
                         }
 
-                        foreach (PathBase path in deletePaths)
+                        foreach (var path in deletePaths)
                         {
                             try { path.Delete(); }
                             catch (PathException)
@@ -645,7 +741,7 @@ namespace MandalaLogics.Path
                 dst.CreateDirectory();
             }
 
-            foreach (PathBase path in srcPaths)
+            foreach (var path in srcPaths)
             {
                 if (path.IsFile) { await path.CopyFileAsync(dst.Add(path.TakeEnd(1)), cancellationToken); }
                 else if (copyFolders) { await path.CopyDirAsync(dst.Add(path.TakeEnd(1)), cancellationToken); }
@@ -711,7 +807,7 @@ namespace MandalaLogics.Path
                 {
                     var ret = Clone();
 
-                    ret.pathElements = new List<string>();
+                    ret._pathElements = new List<string>();
                     ret.EndType = DestType.Dir;
                     ret.Extension = null;
 
@@ -773,7 +869,7 @@ namespace MandalaLogics.Path
             {
                 if (Structure.HasStartToken) { sb.Append(Structure.StartToken); }
 
-                sb.Append(pathElements[0]);
+                sb.Append(_pathElements[0]);
 
                 if (Structure.HasFirstSeperator) { sb.Append(Structure.FirstSeperator); }
                 else
@@ -786,7 +882,7 @@ namespace MandalaLogics.Path
 
             for (int x = start; x < n; x++)
             {
-                sb.Append(pathElements[x]);
+                sb.Append(_pathElements[x]);
                 if (x < n - 1) sb.Append(Structure.Seperator);
             }
 
@@ -833,7 +929,7 @@ namespace MandalaLogics.Path
         /// <summary>
         /// Returns and path with the specified number of elements taken from the end of this path.
         /// </summary>
-        public virtual PathBase TakeEnd(int count) => PathSubpath(this, pathElements.Count - count, count);
+        public virtual PathBase TakeEnd(int count) => PathSubpath(this, _pathElements.Count - count, count);
         /// <summary>
         /// Intelligently appends a file/dir name or subpath to this path, determining if it is a file or dir.
         /// </summary>
@@ -899,7 +995,7 @@ namespace MandalaLogics.Path
 
             if (Structure.HasFirstSeperator)
             {
-                ret.pathElements = ret.pathElements.TakeLast(Count - 1).ToList();
+                ret._pathElements = ret._pathElements.TakeLast(Count - 1).ToList();
             }
 
             return ret;
@@ -915,7 +1011,7 @@ namespace MandalaLogics.Path
 
             if (ret.HasExtension)
             {
-                ret.pathElements[ret.Count - 1] = string.Join(".", ret.pathElements[ret.Count - 1], ret.Extension);
+                ret._pathElements[ret.Count - 1] = string.Join(".", ret._pathElements[ret.Count - 1], ret.Extension);
                 ret.Extension = null;
             }
 
@@ -933,7 +1029,7 @@ namespace MandalaLogics.Path
 
             name = name.Trim();
 
-            var m = extRegex.Match(name);
+            var m = ExtRegex.Match(name);
 
             if (m.Success && IsFile)
             {
@@ -946,7 +1042,7 @@ namespace MandalaLogics.Path
                     throw new NameNotValidException($"File name is not valid: '{name}'. {nameException.Message}");
                 }
 
-                ret.pathElements[ret.Count - 1] = name;
+                ret._pathElements[ret.Count - 1] = name;
                 ret.Extension = ext;
             }
             else
@@ -956,7 +1052,7 @@ namespace MandalaLogics.Path
                     throw new NameNotValidException($"File name is not valid: '{name}'. {nameException.Message}");
                 }
 
-                ret.pathElements[ret.Count - 1] = name;
+                ret._pathElements[ret.Count - 1] = name;
                 ret.Extension = null;
             }
 
@@ -979,7 +1075,7 @@ namespace MandalaLogics.Path
 
             if (mode == DestType.File)
             {
-                var m = extRegex.Match(name);
+                var m = ExtRegex.Match(name);
 
                 if (m.Success)
                 {
@@ -993,7 +1089,7 @@ namespace MandalaLogics.Path
                         throw new NameNotValidException($"File/dir name is not valid: '{m.Groups[2].Value}'.");
                     }
 
-                    ret.pathElements[ret.Count - 1] = name;
+                    ret._pathElements[ret.Count - 1] = name;
                     ret.Extension = ext;
                 }
                 else
@@ -1003,7 +1099,7 @@ namespace MandalaLogics.Path
                         throw new NameNotValidException($"File/dir name is not valid: '{name}'.");
                     }
 
-                    ret.pathElements[ret.Count - 1] = name;
+                    ret._pathElements[ret.Count - 1] = name;
                     ret.Extension = null;
                 }
             }
@@ -1014,24 +1110,12 @@ namespace MandalaLogics.Path
                     throw new NameNotValidException($"File/dir name is not valid: '{name}'.");
                 }
 
-                ret.pathElements[ret.Count - 1] = name;
+                ret._pathElements[ret.Count - 1] = name;
             }
 
             ret.EndType = mode;
 
             return ret;
-        }
-        /// <summary>
-        /// Returns true if this path contains the given path as a descendant.
-        /// </summary>
-        /// <param name="path">The path to check.</param>
-        /// <returns></returns>
-        public bool ContainsPath(PathBase path)
-        {
-            if (path is null) throw new ArgumentNullException("path");            
-            else if (IsAbsolutePath != path.IsAbsolutePath) throw new PathTypeException($"Cannot say if an {Type}-type path contains a {path.Type}-type path.");
-
-            return path.StartsWith(this);
         }
         /// <summary>
         /// Returns a valid dir new child dir path for this dir in the form "new folder {x}".
@@ -1043,7 +1127,7 @@ namespace MandalaLogics.Path
             string name = "New Folder";
             int x = 0;
 
-            while (dirs.Any((path) => path.EndPointName.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            while (dirs.Any(path => path.EndPointName.Equals(name)))
             {
                 name = $"New Folder {++x}";
             }
@@ -1063,7 +1147,7 @@ namespace MandalaLogics.Path
             string name = $"New File{extension}";
             int x = 0;
 
-            while (dirs.Any((path) => path.EndPointName.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            while (dirs.Any(path => path.EndPointName.Equals(name)))
             {
                 name = $"New File {++x}{extension}";
             }
@@ -1101,449 +1185,33 @@ namespace MandalaLogics.Path
             {
                 var ret = Clone();
 
-                ret.pathElements.RemoveRange(0, ret.pathElements.Count - 1);
+                ret._pathElements.RemoveRange(0, ret._pathElements.Count - 1);
 
                 ret.Type = PathType.Relative;
 
                 return ret;
             }
         }
-        public IEnumerator<string> GetEnumerator() => ((IReadOnlyList<string>)pathElements).GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => ((IReadOnlyList<string>)pathElements).GetEnumerator();
 
-        public static PathBase PathSubrtation(PathBase path1, PathBase path2)
-        {
-            if (path1 is null) throw new ArgumentNullException("path1");
-            else if (path2 is null) throw new ArgumentNullException("path2");
-
-            if (path2.Count >= path1.Count)
-            {
-                throw new PathException("Cannot subtract a path which has the same number of elements " +
-                "(or more elements) than the first path.");
-            }
-
-            var ret = path1.Clone();
-
-            if (path1.IsAbsolutePath)
-            {
-                if (path2.IsAbsolutePath)
-                {
-                    if (path1.StartsWith(path2))
-                    {
-                        ret.pathElements = ret.pathElements.TakeLast(path1.Count - path2.Count).ToList();
-                    }
-                    else if (path1.EndsWith(path2))
-                    {
-                        ret.pathElements = ret.pathElements.Take(path1.Count - path2.Count).ToList();
-                    }
-                    else
-                    {
-                        throw new PathException("Can only subtract a path from the begining or end of a path.");
-                    }
-                }
-                else
-                {
-                    if (path1.EndsWith(path2))
-                    {
-                        ret.pathElements = ret.pathElements.Take(path1.Count - path2.Count).ToList();
-                    }
-                    else if (path1.StartsWith(path2))
-                    {
-                        ret.pathElements = ret.pathElements.TakeLast(path1.Count - path2.Count).ToList();
-                    }
-                    else
-                    {
-                        throw new PathException("Can only subtract a path from the begining or end of a path.");
-                    }
-                }
-            }
-            else
-            {
-                if (path1.EndsWith(path2))
-                {
-                    ret.pathElements = ret.pathElements.Take(path1.Count - path2.Count).ToList();
-                }
-                else if (path1.StartsWith(path2))
-                {
-                    ret.pathElements = ret.pathElements.TakeLast(path1.Count - path2.Count).ToList();
-                }
-                else
-                {
-                    throw new PathException("Can only subtract a path from the begining or end of a path.");
-                }                
-            }
-
-            return ret;
-        }
-        public static PathBase PathAddition(PathBase path1, PathBase path2)
-        {
-            if (path1 is null) throw new ArgumentNullException("path1");
-            else if (path2 is null) throw new ArgumentNullException("path2");
-
-            if (path2.IsAbsolutePath) throw new PathTypeException("Cannot append an absolute path, must be a relitive path.");
-            else if (path1.IsFile) throw new PathTypeException("Cannot append anything to a file path.");
-
-            var ret = path1.Clone();
-
-            ret.pathElements = ret.pathElements.Concat(path2.pathElements).ToList();
-            ret.EndType = path2.EndType;
-
-            if (path2.HasExtension)
-            {
-                ret.Extension = path2.Extension;
-            }
-
-            if (ret.EndType == DestType.Unknown) ret.EndType = ret.CheckType();
-
-            return ret;
-        }
-        public static bool PathStartsWith(PathBase path1, PathBase path2)
-        {
-            if (path1 is null) throw new ArgumentNullException("path1");
-            else if (path2 is null) throw new ArgumentNullException("path2");
-
-            if (path1.Count < path2.Count) return false;
-
-            if (path1.IsAbsolutePath == path2.IsAbsolutePath)
-            {
-                return path1.pathElements.Take(path2.Count).SequenceEqual(path2.pathElements, StringComparer.OrdinalIgnoreCase);
-            }
-            else
-            {
-                return false;
-            }
-        }
-        public static bool PathEndsWith(PathBase path1, PathBase path2)
-        {
-            if (path1 is null) throw new ArgumentNullException("path1");
-            else if (path2 is null) throw new ArgumentNullException("path2");
-
-            if (path2.IsAbsolutePath) return false;
-            else if (path1.Count < path2.Count) return false;
-
-            return path1.pathElements.Skip(path1.Count - path2.Count).SequenceEqual(path2.pathElements, StringComparer.OrdinalIgnoreCase);
-        }
-        public static PathBase PathSubpath(PathBase path, int start, int count)
-        {
-            if (path is null) throw new ArgumentNullException("path");
-
-            if (start < 0 || start >= path.Count) throw new ArgumentException($"Start index out of range: {start}");
-            else if (count <= 0) throw new ArgumentException($"Count must be greater than zero: {count}");
-            else if (count + start > path.Count) throw new ArgumentException($"The sume of count ({count}) and start ({start}) cannot be beyond the number of elements ({path.Count}).");
-
-            int n = 0;
-            int x = start;
-            string[] s = new string[count];
-
-            do
-            {
-                s[n] = path.pathElements[x]; 
-                n++;
-                x++;
-            } while (n < count);
-
-            var ret = path.Clone();
-
-            ret.pathElements = s.ToList();
-
-            if (start > 0) { ret.Type = PathType.Relative; }
-
-            if (start + count < path.Count) 
-            { 
-                ret.EndType = DestType.Dir;
-                ret.Extension = null;
-            }
-
-            return ret;
-        }
-        public static PathBase PathContainingDir(PathBase path)
-        {
-            if (path is null) throw new ArgumentNullException("path");
-
-            if (path.Count <= 1) throw new PathException("Cannot get the containg path for a path with only one element.");
-
-            var ret = path.Clone();
-
-            ret.pathElements = ret.pathElements.Take(ret.Count - 1).ToList();
-            ret.EndType = DestType.Dir;
-            ret.Extension = null;
-
-            return ret;
-        }
-        public static IEnumerable<PathBase> PathSiblings(PathBase path)
-        {
-            if (path is null) throw new ArgumentNullException("path");
-            else if (path.Count <= 1) throw new PathException("This path does not have siblings because it is a root path.");
-
-            return path.GetContainingDir().Dir().Where((p) => !p.Equals(path));
-        }
-        public static PathBase PathAppend(PathBase path, string name)
-        {
-            if (path is null) throw new ArgumentNullException("path");
-            else if (path.IsFile) throw new PathTypeException("Cannot append anything to a file path.");
-            else if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name to append cannot be null or empty.");
-
-            name = name.Trim();
-
-            string[] s = path.Structure.SplitSeperator(name);
-            List<string> ls;
-            var ret = path.Clone();
-
-            if (s.Length > 1)
-            {
-                ls = s.Take(s.Length - 1).ToList();
-            }
-            else
-            {
-                ls = new List<string>();
-            }
-
-            string fileName;
-
-            var m = extRegex.Match(s.Last());
-
-            if (m.Success)
-            {
-                if (ExtTemplate.CatchValidate(m.Groups[2].Value, out string ext) is StringValidationException extException)
-                {
-                    throw new NameNotValidException($"File extension is not valid: '{ext}'. {extException.Message}");
-                }
-                else if (NameTemplate.CatchValidate(m.Groups[1].Value, out fileName) is StringValidationException nameException)
-                {
-                    throw new NameNotValidException($"File name is not valid: '{fileName}'. {nameException.Message}");
-                }
-
-                ls.Add(fileName);
-                ret.Extension = ext;
-                ret.EndType = DestType.File;
-            }
-            else
-            {
-                if (NameTemplate.CatchValidate(s.Last(), out fileName) is StringValidationException nameException)
-                {
-                    throw new NameNotValidException($"File name is not valid: '{fileName}'. {nameException.Message}");
-                }
-
-                ls.Add(fileName);
-            }
-
-            ret.pathElements = ret.pathElements.Concat(ls).ToList();
-
-            if (ret.EndType == DestType.Unknown) { ret.EndType = ret.CheckType(); }
-
-            ret.exists = null;
-
-            return ret;
-        }
-        public static PathBase PathAppend(PathBase path, string name, DestType type)
-        {
-            if (path is null) throw new ArgumentNullException(nameof(path));
-            else if (path.IsFile) throw new PathTypeException("Cannot append anything to a file path.");
-            else if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name to append cannot be null or empty.");
-            else if (type == DestType.Unknown) throw new PathTypeException("Cannot append a string with a DestType of unknown.");
-
-            name = name.Trim();
-
-            string[] s = path.Structure.SplitSeperator(name);
-            List<string> ls;
-            var ret = path.Clone();
-            string fileName;
-            string last = s[^1];
-
-            if (type == DestType.File)
-            {
-                ls = s[..^1].ToList();                
-
-                var m = extRegex.Match(s.Last());
-
-                if (m.Success)
-                {
-                    if (ExtTemplate.CatchValidate(m.Groups[2].Value, out string ext) is StringValidationException extException)
-                    {
-                        throw new NameNotValidException($"File extension is not valid: '{ext}'. {extException.Message}");
-                    }
-                    else if (NameTemplate.CatchValidate(m.Groups[1].Value, out fileName) is StringValidationException nameException)
-                    {
-                        throw new NameNotValidException($"File name is not valid: '{fileName}'. {nameException.Message}");
-                    }
-
-                    ls.Add(fileName);
-                    ret.Extension = ext;
-                }
-                else
-                {
-                    if (NameTemplate.CatchValidate(last, out fileName) is StringValidationException nameException)
-                    {
-                        throw new NameNotValidException($"File name is not valid: '{fileName}'. {nameException.Message}");
-                    }
-
-                    ls.Add(fileName);
-                }
-            }
-            else
-            {
-                if (NameTemplate.CatchValidate(last, out fileName) is StringValidationException nameException)
-                {
-                    throw new NameNotValidException($"File or folder name is not valid: '{fileName}'. {nameException.Message}");
-                }
-
-                ls = s.ToList();
-            }
-
-            ret.pathElements = ret.pathElements.Concat(ls).ToList();
-            ret.EndType = type;
-
-            return ret;
-        }
-        public static string ParseFileLength(long byteLength, int sigFigs = 3)
-        {
-            if (byteLength == 0L) return "0B";
-            else if (byteLength < 0L) throw new ArgumentException("File length cannot be less than zero.");
-
-            int pow = (int)Math.Log(byteLength, 1024d);
-
-            double factor = byteLength / Math.Pow(1024d, pow);
-
-            return GetSigFigs(factor, sigFigs) + LengthUnits[pow];
-        }
-        public static double GetSigFigs(double value, int sigFigs)
-        {
-            if (value == 0d) return 0d;
-            else if (sigFigs <= 0) throw new ArgumentException("Number of significant figure cannot be less than or equal to zero.");
-            else if (double.IsNaN(value)) throw new ArgumentException("value is NaN.");
-            else if (double.IsInfinity(value)) throw new ArgumentException("value cannot be +/- infinity.");
-
-            bool negative = value < 0d;
-
-            if (negative) { value = -value; }
-
-            double factor = Math.Floor(Math.Log10(value));
-
-            value /= Math.Pow(10d, factor);
-
-            return Math.Round(value, sigFigs - 1) * Math.Pow(10d, factor) * (negative ? -1d : 1d);
-        }
+        public IEnumerator<string> GetEnumerator() => new PathEnumerator(this);
+        IEnumerator IEnumerable.GetEnumerator() => new PathEnumerator(this);
         
         public override string ToString() => Path;
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            return Equals(obj as PathBase);
+            return obj is PathBase other && Equals(other);
         }
         public bool Equals(PathBase other)
         {
-            return other != null &&
-                   Structure.Equals(other.Structure) &&
-                   pathElements.SequenceEqual(other.pathElements, StringComparer.Ordinal);
+            return Structure.Equals(other.Structure) &&
+                   _pathElements.SequenceEqual(other._pathElements, StringComparer.Ordinal);
         }
         public override int GetHashCode()
         {
             int hashCode = -1553999267;
             hashCode = hashCode * -1521134295 + Structure.GetHashCode();
-            hashCode = hashCode * -1521134295 + pathElements.CaseInsensitiveHash();
+            hashCode = hashCode * -1521134295 + _pathElements.CaseInsensitiveHash();
             return hashCode;
-        }
-        
-        public static bool operator ==(PathBase left, PathBase right)
-        {
-            return EqualityComparer<PathBase>.Default.Equals(left, right);
-        }
-        public static bool operator !=(PathBase left, PathBase right)
-        {
-            return !(left == right);
-        }
-        
-        public static string CleanPath(string path)
-        {
-            path = path.Replace(@"/", @"\")
-                       .Replace(@"\\", @"\");
-
-            if (path.EndsWith(":")) { return path + @"\"; }
-            else { return path; }
-
-        }
-        public static string GetAccessString(AccessLevel access)
-        {
-            if (access == AccessLevel.None) return "None";
-
-            List<string> s = new List<string>(6);
-
-            AccessLevel mask;
-
-            for (int x = 0; x <= 5; x++)
-            {
-                mask = (AccessLevel)(1 << x);
-
-                if ((access & mask) == mask)
-                {
-                    s.Add(mask.ToString());
-                }
-            }
-
-            return string.Join(", ", s);
-        }
-
-        public static PathBase FindCommandPath(PathBase workingDir, string pattern)
-        {
-            PathBase? x = null;
-
-            try
-            {
-                x = (PathBase)workingDir.Structure.DefaultConstructor.Invoke(new object[2] { pattern, DestType.Unknown });
-            }
-            catch (TargetInvocationException e)
-            {
-                if (!(e.InnerException is PathException)) { throw e; }
-            }
-
-            if (x is PathBase a)
-            {
-                if (a.IsAbsolutePath) { return a; }
-                else
-                {
-                    return workingDir.Append(pattern);
-                }
-            }
-
-            if (pattern.StartsWith("../"))
-            {
-                if (workingDir.IsRootPath) { throw new PathException("It is not valid to use '..' to take the owner of a root path."); }
-                workingDir = workingDir.GetContainingDir();
-                pattern = pattern[3..];
-            }
-            else if (pattern.StartsWith("./"))
-            {
-                pattern = pattern[2..];
-            }
-            else if (pattern.Equals("."))
-            {
-                return workingDir;
-            }
-            else if (pattern.Equals(".."))
-            {
-                if (workingDir.IsRootPath) { throw new PathException("It is not valid to use '..' to take the owner of a root path."); }
-                return workingDir.GetContainingDir();
-            }
-
-            PathException? pe = null;
-
-            try
-            {
-                x = (PathBase)workingDir.Structure.DefaultConstructor.Invoke(new object[2] { pattern, DestType.Unknown });
-            }
-            catch (TargetInvocationException e)
-            {
-                if (e.InnerException is PathException ex) { pe = ex; }
-                else { throw e; }
-            }
-
-            if (x is PathBase b)
-            {
-                return b;
-            }
-            else
-            {
-                throw pe ?? throw new Exception();
-            }
         }
     }
 }

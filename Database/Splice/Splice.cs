@@ -7,20 +7,20 @@ using System.Reflection;
 using System.Threading;
 using MandalaLogics.Packing;
 using MandalaLogics.Encoding;
-using MandalaLogics.Weave;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
     /// <summary>
-    /// A typed list backup by a stream, which is thread-safe.
+    /// A thread-safe typed list backup by a stream.
     /// </summary>
     public sealed partial class Splice<T> : IList<T> where T : class, IEncodable
     {
         private const int BlockSize = 512;
         private const int MaxChainLength = 50;
-        private const int MaxCacheSize = 64 * 1024 * 1024;
+        private const int MaxCacheSize = 128 * 1024;
 
         private static readonly int BlockCapacity;
+        private static readonly TimeSpan WaitTime = TimeSpan.FromMilliseconds(500);
 
         public bool Disposed { get; private set; } = false;
         public int Count => _chains.Count;
@@ -76,21 +76,24 @@ namespace MandalaLogics.Splice
         
         private readonly Stream _stream;
         private readonly SpliceHeader _header;
-        private readonly List<BlockHeader> _blocks;
-        private readonly List<ChainHeader> _chains;
-        private readonly SpliceCache _cache = new SpliceCache(MaxCacheSize);
+        private readonly List<SpliceBlockHeader> _blocks;
+        private readonly List<SpliceChainHeader> _chains;
+        private readonly SpliceCache _cache;
         private readonly ReaderWriterLockSlim _streamLock = new ReaderWriterLockSlim();
         private readonly ReaderWriterLockSlim _enumLock = new ReaderWriterLockSlim();
         
         static Splice()
         {
-            EncodedObject.RegisterAll(Assembly.GetAssembly(typeof(Splice<>)));
+            EncodingRegister.RegisterAll(Assembly.GetAssembly(typeof(Splice<>)));
 
-            BlockCapacity = BlockSize - BlockHeader.EncodedSize;
+            BlockCapacity = BlockSize - SpliceBlockHeader.EncodedSize;
         }
 
-        public Splice(Stream stream)
+        public Splice(Stream stream, int maxCacheSize = MaxCacheSize)
         {
+            if (maxCacheSize < 0) maxCacheSize = 0;
+            else if (maxCacheSize > MaxCacheSize) maxCacheSize = MaxCacheSize;
+            
             stream.Seek(0L, SeekOrigin.Begin);
 
             _stream = stream;
@@ -108,35 +111,36 @@ namespace MandalaLogics.Splice
                     throw new SpliceNotValidException("Failed to decode header.");
                 }
 
-                if (!_header.CompareType(typeof(T))) 
-                    throw new ArgumentException
-                        ("The supplied generic type of this class is probably not the same one with which this splice was initially created.");
+                _header.CompareType(typeof(T));
             }
             catch (Exception e) when (e is EncodingException)
             {
                 throw new SpliceNotValidException("Splice not valid, could not read header.", e);
             }
-            catch (EndOfStreamException) //stream is empty, probably
+            catch (EndOfStreamException) //stream is empty
             {
                 if (_stream.Length != 0) throw new SpliceNotValidException("Failed to decode header.");
 
                 _header = new SpliceHeader(typeof(T));
+                _header.WriteSelf(_stream);
                 
                 stream.SetLength(BlockSize);
             }
 
-            _blocks = new List<BlockHeader>(_header.BlockCount);
+            _blocks = new List<SpliceBlockHeader>(_header.BlockCount);
 
             ReadAllBlocks();
 
-            _chains = _blocks.Where(b => b is ChainHeader).Cast<ChainHeader>().ToList();
+            _chains = _blocks.Where(b => b is SpliceChainHeader).Cast<SpliceChainHeader>().ToList();
             
             _chains.Sort((c1, c2) => c1.Ordinal - c2.Ordinal);
+
+            _cache = new SpliceCache(maxCacheSize);
         }
         
         private void EnterWriteLock()
         {
-            if (_enumLock.TryEnterWriteLock(Weave.Weave.WaitTime))
+            if (_enumLock.TryEnterWriteLock(WaitTime))
             {
                 _streamLock.EnterWriteLock();
             }
@@ -148,7 +152,7 @@ namespace MandalaLogics.Splice
         
         private void EnterUpgradableReadLock()
         {
-            if (_enumLock.TryEnterWriteLock(Weave.Weave.WaitTime))
+            if (_enumLock.TryEnterWriteLock(WaitTime))
             {
                 _streamLock.EnterUpgradeableReadLock();
             }
@@ -360,7 +364,7 @@ namespace MandalaLogics.Splice
 
                 for (var x = 0; x < _blocks.Count; x++)
                 {
-                    _blocks[x] = new BlockHeader { Disused = true };
+                    _blocks[x] = new SpliceBlockHeader { Disused = true };
                     WriteBlock(x);
                 }
                 
@@ -531,6 +535,44 @@ namespace MandalaLogics.Splice
                 _streamLock.ExitUpgradeableReadLock();
             }
         }
+        
+        public int IndexOf(Predicate<T> predicate)
+        {
+            if (Disposed) throw new ObjectDisposedException(nameof(Splice<T>));
+            
+            EnterUpgradableReadLock();
+
+            try
+            {
+                if (_cache.IndexOf(predicate) is { } i) return i;
+                
+                _streamLock.EnterWriteLock();
+
+                try
+                {
+                    for (var x = 0; x < _chains.Count; x++)
+                    {
+                        if (!_cache.Contains(x))
+                        {
+                            var t = ReadFromChain(x);
+
+                            if (predicate.Invoke(t)) return x;
+                        }
+                    }
+
+                    return -1;
+                }
+                finally
+                {
+                    _streamLock.ExitWriteLock();
+                }
+            }
+            finally
+            {
+                _enumLock.ExitWriteLock();
+                _streamLock.ExitUpgradeableReadLock();
+            }
+        }
 
         public void Insert(int index, T item)
         {
@@ -595,7 +637,7 @@ namespace MandalaLogics.Splice
 
                     EncodedValue.Read(_stream, out var ev);
 
-                    if (ev.Value is BlockHeader bh)
+                    if (ev.Value is SpliceBlockHeader bh)
                     {
                         bh.SetIndex(n - 1);
                         _blocks.Add(bh);
@@ -632,7 +674,7 @@ namespace MandalaLogics.Splice
                 seam = seam.Append(GetStitch(blockIndex));
             }
 
-            var ms = new MemoryStream(seam.Read(_stream));
+            using var ms = new MemoryStream(seam.Read(_stream));
 
             EncodedValue.Read(ms, out var ev);
 
@@ -718,7 +760,7 @@ namespace MandalaLogics.Splice
                 
             foreach (var blockIndex in chain)
             {
-                _blocks[blockIndex] = new BlockHeader { Disused = true };
+                _blocks[blockIndex] = new SpliceBlockHeader { Disused = true };
                 
                 WriteBlock(blockIndex);
             }
@@ -727,7 +769,7 @@ namespace MandalaLogics.Splice
                 
             SetChainOrdinals();
 
-            _blocks[chain.BlockIndex] = new BlockHeader { Disused = true };
+            _blocks[chain.BlockIndex] = new SpliceBlockHeader { Disused = true };
                 
             WriteBlock(chain.BlockIndex);
                 
@@ -740,7 +782,7 @@ namespace MandalaLogics.Splice
         {
             var blockIndex = _chains[chainIndex][^1];
 
-            _blocks[blockIndex] = new BlockHeader { Disused = true };
+            _blocks[blockIndex] = new SpliceBlockHeader { Disused = true };
                 
             WriteBlock(blockIndex);
                 
@@ -751,7 +793,7 @@ namespace MandalaLogics.Splice
 
         private void ExtendChain(int chainIndex)
         {
-            var block = GetFreeBlock(new BlockHeader { Disused = false });
+            var block = GetFreeBlock(new SpliceBlockHeader { Disused = false });
 
             _chains[chainIndex].Append(block);
                 
@@ -760,9 +802,9 @@ namespace MandalaLogics.Splice
 
         private int CreateChain()
         {
-            var block = GetFreeBlock(new BlockHeader { Disused = false });
+            var block = GetFreeBlock(new SpliceBlockHeader { Disused = false });
 
-            var chain = new ChainHeader { Disused = false, Ordinal = _chains.Count };
+            var chain = new SpliceChainHeader { Disused = false, Ordinal = _chains.Count };
             chain.Append(block);
 
             GetFreeBlock(chain);
@@ -774,7 +816,7 @@ namespace MandalaLogics.Splice
             return _chains.Count - 1;
         }
 
-        private int GetFreeBlock(BlockHeader header)
+        private int GetFreeBlock(SpliceBlockHeader header)
         {
             for (var x = 0; x < _blocks.Count; x++)
             {
@@ -789,7 +831,7 @@ namespace MandalaLogics.Splice
             return CreateBlock(header);
         }
 
-        private int CreateBlock(BlockHeader block)
+        private int CreateBlock(SpliceBlockHeader block)
         {
             int index = _blocks.Count;
                 
@@ -815,7 +857,7 @@ namespace MandalaLogics.Splice
             _blocks[blockIndex].Encode().Write(_stream);
         }
 
-        private Stitch GetStitch(int index) => new Stitch((index + 1) * BlockSize + BlockHeader.EncodedSize, BlockSize - BlockHeader.EncodedSize);
+        private Stitch GetStitch(int index) => new Stitch((index + 1) * BlockSize + SpliceBlockHeader.EncodedSize, BlockSize - SpliceBlockHeader.EncodedSize);
         
         public void Dispose()
         {

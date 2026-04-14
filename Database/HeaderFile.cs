@@ -4,7 +4,7 @@ using MandalaLogics.Encoding;
 
 namespace MandalaLogics.Database
 {
-    public class HeaderFile<T> : IDisposable where T : class, IEncodable
+    public sealed class HeaderFile<T> : IDisposable where T : class, IEncodable
     {
         public bool ValueSet
         {

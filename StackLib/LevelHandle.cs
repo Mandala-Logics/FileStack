@@ -3,15 +3,16 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using MandalaLogics.Database;
 using MandalaLogics.Encoding;
-using MandalaLogics.Packing;
-using MandalaLogics.Splice;
+using MandalaLogics.Path.Hashing;
+using MandalaLogics.Locking;
 
 namespace MandalaLogics.Stacking
 {
     public partial class FileStack
     {
-        public class LevelHandle : IReadOnlyList<FileStackEntry>, IDisposable
+        public class LevelHandle : IReadOnlyList<FileStackEntry>, IDisposable, ILeaseable<LevelHandle>
         {
             private readonly FileStack _owner;
             private readonly Splice<StackedFileInfo> _db;
@@ -20,10 +21,12 @@ namespace MandalaLogics.Stacking
             public FileStackEntry this[int index] => new FileStackEntry(_db[index], this);
             public int Count => _db.Count;
             public bool Disposed => _db.Disposed || _owner.Disposed;
-            public bool HasMetadata => info.Value.HasMetadata;
-            public EncodedValue? Metadata => info.Value.Metadata;
+            public bool HasMetadata => _info.Value.HasMetadata;
+            public EncodedValue? Metadata => _info.Value.Metadata;
 
-            private Splice<LevelInfo>.SpliceHandle info;
+            private readonly SyncLock _lock = new SyncLock();
+
+            private readonly Splice<LevelInfo>.SpliceHandle _info;
             private ReaderWriterLockSlim _enumLock = new ReaderWriterLockSlim();
             
             internal LevelHandle(FileStack owner, uint levelId, Splice<LevelInfo>.SpliceHandle li)
@@ -34,36 +37,39 @@ namespace MandalaLogics.Stacking
 
                 _db = new Splice<StackedFileInfo>(owner._data.GetStrand(levelId));
 
-                info = li;
+                _info = li;
             }
 
             public EncodedValue? GetMetadata()
             {
-                return info.Value.Metadata;
+                return _info.Value.Metadata;
             }
 
             public void SetMetadata(EncodedValue? metadata)
             {
-                info.Value.Metadata = metadata;
+                _info.Value.Metadata = metadata;
             }
 
             public uint Add(string fileId, Stream stream)
             {
                 if (Disposed) throw new ObjectDisposedException(nameof(LevelHandle));
                 
+                using var l = _lock.Take();
+                
                 var bulkId = _owner._bulkHandler.GetOrCreate(stream);
                 
                 _db.Add(new StackedFileInfo(bulkId, LevelId, fileId));
 
-                info.Value.FileCount++;
-                //info.Flush();
+                _info.Value.FileCount++;
 
                 return bulkId;
             }
 
-            public uint? TryAdd(string fileId, FileFingerprint fingerprint)
+            public bool TryAdd(string fileId, FileFingerprint fingerprint)
             {
                 if (Disposed) throw new ObjectDisposedException(nameof(LevelHandle));
+                
+                using var l = _lock.Take();
                 
                 if (_owner._bulkHandler.Get(fingerprint) is { } handle)
                 {
@@ -72,20 +78,21 @@ namespace MandalaLogics.Stacking
                     handle.Value.AddReference();
                     handle.Dispose();
                     
-                    info.Value.FileCount++;
-                    //info.Flush();
+                    _info.Value.FileCount++;
 
-                    return handle.Value.BulkId;
+                    return true;
                 }
                 else
                 {
-                    return null;
+                    return false;
                 }
             }
-
+            
             internal void RecoverFile(uint bulkId, Stream output)
             {
                 if (Disposed) throw new ObjectDisposedException(nameof(LevelHandle));
+                
+                using var l = _lock.Take();
                 
                 using var strand = _owner._data.GetStrand(bulkId);
                 
@@ -97,9 +104,12 @@ namespace MandalaLogics.Stacking
             public void Dispose()
             {
                 _db.Dispose();
-                info.Dispose();
-                
-                _owner._levelHandler.LevelHandleClosed(LevelId);
+                _info.Dispose();
+            }
+            
+            public Lease<LevelHandle> GetLease()
+            {
+                return new Lease<LevelHandle>(this, _lock.Take());
             }
 
             public IEnumerator<FileStackEntry> GetEnumerator()
@@ -130,7 +140,7 @@ namespace MandalaLogics.Stacking
                 {
                     if (_baseEnum.MoveNext())
                     {
-                        Current = new FileStackEntry(_baseEnum.Current, _owner);
+                        Current = new FileStackEntry(_baseEnum.Current!, _owner);
                         return true;
                     }
                     else

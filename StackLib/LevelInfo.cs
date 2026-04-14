@@ -3,6 +3,7 @@ using MandalaLogics.Encoding;
 
 namespace MandalaLogics.Stacking
 {
+    [Encodable("lvl_info")]
     public class LevelInfo : IEncodable
     {
         public uint LevelId { get; }

@@ -1,6 +1,6 @@
 using System;
 
-namespace MandalaLogics.Splice
+namespace MandalaLogics.Database
 {
     public class SpliceNotValidException : Exception
     {

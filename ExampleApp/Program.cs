@@ -1,19 +1,32 @@
-﻿using System.IO;
-using MandalaLogics.Logging;
+﻿using System;
+using System.IO;
+using System.Reflection;
+using System.Threading;
+using MandalaLogics.Encoding;
 using MandalaLogics.Path;
+using MandalaLogics.Path.Hashing;
 using MandalaLogics.Stacking;
 
 internal static class Program
 {
+    static Program()
+    {
+        EncodingRegister.RegisterAll(Assembly.GetAssembly(typeof(FileFingerprint))!);
+    }
+    
     public static void Main(string[] args)
     {
-        var dir = LinuxPath.Home.Append("repos/mandala_logics", DestType.Dir);
+        var dir = LinuxPath.Home.Append("repos/v7", DestType.Dir);
         
         var stackFile = LinuxPath.Home.Append("test.stack", DestType.File);
 
-        var stack = new FileStack(stackFile.OpenStream(FileMode.Open, FileAccess.ReadWrite, FileShare.None));
+        var stack = new FileStack(stackFile.OpenStream(FileMode.Create, FileAccess.ReadWrite, FileShare.None));
         
-        stack.CreateLevelFromFolder(dir, new Logger(LogLevel.Verbose));
+        var thread = stack.CreateLevelFromFolder(dir, CancellationToken.None, null);
+
+        thread.State.Progress.ProgressUpdated += (sender, e) => Console.WriteLine(thread.State.Progress.Text);
+
+        thread.Join();
         
         stack.Dispose();
     }

@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\Linux\Linux.csproj" />
+      <ProjectReference Include="..\OS\OS.csproj" />
       <ProjectReference Include="..\StackLib\StackLib.csproj" />
     </ItemGroup>
 
